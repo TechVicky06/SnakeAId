@@ -37,7 +37,7 @@ else:
     client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 # Gemini API configuration
-GEMINI_API_KEY = 'AIzaSyC91lYMZjNiUw_AuzzniWHqDqWVeH0De9Q'
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyC91lYMZjNiUw_AuzzniWHqDqWVeH0De9Q')
 print(f"Gemini API Key (first 5 chars): {GEMINI_API_KEY[:5]}...")
 
 # Configure Gemini
@@ -64,264 +64,263 @@ except Exception as e:
     print(f"Error initializing Gemini model: {e}")
     model = None
 
-# Global variable to track conversation state
+# Global variable to track conversation state and asked questions
 conversation_state = {}
 
-def generate_follow_up_question(message, current_context, who_guidelines, stretcher_methods):
-    """
-    Dynamically generate a follow-up question based on the current conversation context
-    and the available WHO guidelines.
+# WHO First Aid Guidelines Context - ONLY knowledge the bot has
+who_guidelines = """
+WHO Snake Bite First Aid Guidelines:
+- Keep the person calm and still - many snake bites are non-venomous and even venomous bites aren't immediately fatal
+- Remove anything tight from around the bitten part (rings, anklets, bracelets) as these can cause harm if swelling occurs
+- Immobilize the person completely and splint the limb
+- Monitor airway and breathing, be ready to resuscitate if needed
+- Transport to health facility ASAP
+- If vomiting occurs, place person on left side
+- Use a makeshift stretcher to carry the person to transport
+- Never use a tight arterial tourniquet
+- Australian Pressure Immobilization Bandage only for neurotoxic snakes without local swelling
+- Applying pressure at bite site with pressure pad may be suitable in some cases
+- Avoid traditional first aid methods and herbal medicines
+- Paracetamol may be given for local pain
+- If snake is still attached use a stick or tool to make it let go
+- Sea snake victims need to be moved to dry land to avoid drowning
+- Ensure area is safe before providing care
+"""
+
+# Makeshift Stretcher Methods Context - ONLY knowledge about stretchers
+stretcher_methods = """
+Makeshift Stretcher Methods:
+1. Rope Stretcher:
+   - Lay zigzag rope pattern larger than victim
+   - Secure ends with clove hitches
+   - Thread poles through loops for stability
+
+2. Tarp Stretcher:
+   - Lay tarp flat
+   - Position poles in folding pattern
+   - Fold sections over poles
+   - Use victim's weight to hold tarp
+
+3. Duct Tape Stretcher:
+   - Create 4 perpendicular duct tape straps
+   - Add long center support strap
+   - Reinforce with diagonal straps
+
+4. Jacket Stretcher:
+   - Invert 2-3 jacket sleeves
+   - Thread poles through sleeves
+   - Secure with diagonal lashings
+"""
+
+# Predefined initial message variations
+initial_message_variations = [
+    """Move them away from the snake. Remove any tight items like rings or bracelets. Keep them calm and still.
+Keep their leg still and straight. Don't tie anything around it or try to cut or suck the bite.
+If transport is far, make a stretcher using a tarp, rope, or jackets. Get them to a health facility ASAP.
+If they feel dizzy or vomit, lay them on their left side. Watch their breathing and be ready to help if needed.""",
     
-    Args:
-        message (str): The previous message from the user
-        current_context (dict): Current conversation state
-        who_guidelines (str): WHO first aid guidelines context
-        stretcher_methods (str): Makeshift stretcher methods context
+    """First, ensure they're away from the snake. Take off any tight jewelry or clothing near the bite.
+Keep them as still as possible, with the affected limb straight and immobilized.
+If you need to transport them, create a stretcher from available materials and get to medical help quickly.
+If they start feeling dizzy or vomiting, position them on their left side and monitor their breathing.""",
     
-    Returns:
-        str: A context-aware follow-up question
-    """
+    """Get them to a safe distance from the snake first. Remove any constricting items like rings or bracelets.
+Keep them calm and completely still, with the bitten limb straight and supported.
+For transport, you can make a stretcher from a tarp, rope, or jackets if needed. Head to medical care right away.
+Watch for dizziness or vomiting - if these occur, lay them on their left side and keep monitoring their breathing.""",
+    
+    """Start by moving them away from the snake's location. Take off any tight items near the bite area.
+Help them stay calm and motionless, keeping the affected limb straight and still.
+If you need to carry them, create a stretcher from available materials and get to medical help immediately.
+If they become dizzy or vomit, place them on their left side and watch their breathing carefully.""",
+    
+    """First priority: get them away from the snake. Remove any tight jewelry or clothing from the bite area.
+Keep them completely still and calm, with the bitten limb straight and supported.
+For longer distances, make a stretcher from tarp, rope, or jackets. Get to medical help as soon as possible.
+If they feel dizzy or vomit, position them on their left side and monitor their breathing closely."""
+]
+
+# Predefined questions and responses
+predefined_questions = [
+    "Have you removed any tight items like rings or bracelets from around the bite area?",
+    "Is the person calm and still?",
+    "How is their breathing? Are they conscious and alert?",
+    "Has the affected limb been immobilized?",
+    "Do you need help preparing transport to a medical facility?",
+    "Is the person showing any signs of dizziness or vomiting?",
+    "Do you have materials available to make a stretcher if needed?",
+    "Can you tell me about their current condition?",
+    "Is the person able to speak and respond to questions?",
+    "Do you have access to medical help nearby?"
+]
+
+predefined_responses = {
+    'positive': [
+        "That's good. Let's continue monitoring their condition.",
+        "Keep up the good care. Let's check something else.",
+        "Well done. Let's make sure we haven't missed anything.",
+        "That's helpful information. Let's check another aspect.",
+        "Good to hear. Let's verify another important detail."
+    ],
+    'negative': [
+        "Let's address that right away.",
+        "We should focus on that now.",
+        "That's important to handle immediately.",
+        "Let's work on that together.",
+        "We need to take care of that."
+    ],
+    'needs_help': [
+        "I'll help you with that.",
+        "Let me guide you through this.",
+        "I can help you with that step.",
+        "Let's work on this together.",
+        "I'll walk you through this."
+    ]
+}
+
+def get_predefined_response(message, current_state):
+    """Generate a response using predefined questions and responses."""
     try:
-        # Comprehensive context for question generation
-        context_prompt = f"""You are an emergency snake bite first aid AI assistant. 
-        Generate a precise, context-aware follow-up question based strictly on the WHO guidelines.
-
-        AVAILABLE CONTEXT:
-        {who_guidelines}
-        {stretcher_methods}
-
-        CURRENT CONVERSATION CONTEXT:
-        Previous Message: {message}
-        Current Conversation Stage: {current_context['stage']}
-        Last Action: {current_context['last_action']}
-
-        QUESTION GENERATION GUIDELINES:
-        - Base the question ONLY on the provided WHO guidelines
-        - Do not invent or speculate beyond the given context
-        - Make the question specific and actionable
-        - Focus on immediate first aid and safety
-        - Aim to gather critical information for next steps
-        - Keep the question concise and clear
-
-        Generate a single, targeted follow-up question."""
+        # Initialize state if needed
+        if 'asked_questions' not in current_state:
+            current_state['asked_questions'] = set()
+            current_state['completed_actions'] = set()
         
-        # Generate follow-up question using Gemini
-        response = model.generate_content(context_prompt)
+        # Get the last question asked
+        last_question = current_state.get('last_question', '')
         
-        # Ensure a valid question is generated
-        follow_up_question = response.text.strip() if response and response.text else (
-            "What is the current condition of the victim?"
-        )
+        # Evaluate the user's response
+        message_lower = message.lower()
+        is_affirmative = any(word in message_lower for word in ['yes', 'yeah', 'done', 'okay', 'ok', 'sure', 'ready'])
+        is_negative = any(word in message_lower for word in ['no', 'not', 'haven\'t', 'can\'t', 'cannot', 'didn\'t'])
+        needs_help = any(word in message_lower for word in ['help', 'how', 'what', 'unclear', 'explain', 'don\'t understand'])
         
-        # Ensure the question ends with a question mark
-        if not follow_up_question.endswith('?'):
-            follow_up_question += '?'
+        # Generate response based on user's answer
+        if is_affirmative:
+            response = random.choice(predefined_responses['positive'])
+        elif is_negative:
+            response = random.choice(predefined_responses['negative'])
+        elif needs_help:
+            response = random.choice(predefined_responses['needs_help'])
+        else:
+            response = "Let's check something else."
         
-        return follow_up_question
-    
+        # Get next question
+        available_questions = [q for q in predefined_questions if q not in current_state['asked_questions']]
+        if not available_questions:
+            available_questions = predefined_questions
+        next_question = random.choice(available_questions)
+        
+        # Update state
+        current_state['asked_questions'].add(next_question)
+        current_state['last_question'] = next_question
+        
+        return f"{response}\n\n{next_question}"
+        
     except Exception as e:
-        print(f"Error generating follow-up question: {e}")
-        return "What is the current condition of the victim?"
-
-def process_user_response(message, current_context, who_guidelines, stretcher_methods):
-    """
-    Process user's response based on the current conversation context.
-    
-    Args:
-        message (str): User's response message
-        current_context (dict): Current conversation state
-        who_guidelines (str): WHO first aid guidelines context
-        stretcher_methods (str): Makeshift stretcher methods context
-    
-    Returns:
-        tuple: (response_text, updated_context)
-    """
-    try:
-        # Determine follow-up based on conversation flow
-        # Prioritize specific actions from WHO guidelines
-        specific_actions = [
-            ('snake', 'Move away from the snake if still nearby.'),
-            ('tight', 'Remove rings, bracelets near the bite area.'),
-            ('calm', 'Keep the victim calm. Most snake bites are not immediately fatal.'),
-            ('leg', 'Keep the leg still. Do not move or tie anything around it.'),
-            ('stretcher', 'Prepare to make a stretcher using tarp, rope, or jackets.'),
-            ('dizzy', 'If dizzy or vomiting, lay on left side. Monitor breathing.'),
-            ('pain', 'Paracetamol may help with severe local pain.')
-        ]
-        
-        # Find the most relevant action based on the message
-        response_text = None
-        for keyword, action_text in specific_actions:
-            if keyword in message.lower():
-                response_text = action_text
-                break
-        
-        # If no specific action found, provide a generic but short guidance
-        if not response_text:
-            response_text = "Continue to prioritize safety. Keep the victim still and calm."
-        
-        # Generate a follow-up question
-        follow_up_questions = [
-            "Are you able to keep the victim still?",
-            "What materials do you have nearby?",
-            "Can you describe the victim's current condition?",
-            "Is help on the way?"
-        ]
-        
-        # Select a follow-up question based on context or randomly
-        import random
-        follow_up_question = random.choice(follow_up_questions)
-        
-        # Combine response and follow-up question
-        full_response = f"{response_text}\n\n{follow_up_question}"
-        
-        # Update context if needed
-        if 'last_action' in current_context:
-            current_context['previous_action'] = current_context['last_action']
-        
-        return full_response, current_context
-    
-    except Exception as e:
-        print(f"Error processing user response: {e}")
-        return "Continue to prioritize the victim's safety. Emergency services should be contacted immediately.", current_context
+        return "How is the person's condition now?"
 
 def generate_response(message, sender=None):
+    """Generate a conversational response based strictly on guidelines."""
     try:
-        # Retrieve or initialize conversation state for this sender
+        # Initialize or get conversation state
         if sender not in conversation_state:
-            conversation_state[sender] = {'stage': 'initial', 'last_action': None, 'conversation_depth': 0}
+            conversation_state[sender] = {
+                'is_initial': True,
+                'asked_questions': set(),
+                'completed_actions': set(),
+                'moved_from_snake': False,
+                'removed_tight_items': False,
+                'checked_breathing': False,
+                'in_recovery_position': False,
+                'stretcher_step': 0,
+                'has_shown_initial_message': False
+            }
         
         current_state = conversation_state[sender]
-        current_state['conversation_depth'] += 1
         
-        # WHO First Aid Guidelines Context
-        who_guidelines = """
-        First Aid Guidelines for Snake Bites:
-        - Immediately move away from the snake bite area
-        - If snake is attached, use a stick to make it let go
-        - Remove tight items (rings, anklets, bracelets)
-        - Reassure the victim
-        - Immobilize the person completely
-        - Splint the limb
-        - Use makeshift stretcher for transport
-        - Never use a tight arterial tourniquet
-        - Only use Australian Pressure Immobilization Bandage for specific neurotoxic snakes
-        - Transport to health facility ASAP
-        - Paracetamol may help with local pain
-        - If vomiting occurs, place person on left side
-        - Monitor airway and breathing
-        """
+        # Check if this is the first user message and we haven't shown the initial message yet
+        is_first_message = request.json.get('is_first_message', False)
         
-        # Makeshift Stretcher Methods Context
-        stretcher_methods = """
-        Makeshift Stretcher Methods:
-        1. Rope Stretcher:
-           - Lay zigzag rope pattern larger than victim
-           - Secure ends with clove hitches
-           - Thread poles through loops for stability
-
-        2. Tarp Stretcher:
-           - Lay tarp flat
-           - Position poles in folding pattern
-           - Fold sections over poles
-           - Use victim's weight to hold tarp
-
-        3. Duct Tape Stretcher:
-           - Create 4 perpendicular duct tape straps
-           - Add long center support strap
-           - Reinforce with diagonal straps
-
-        4. Jacket Stretcher:
-           - Invert 2-3 jacket sleeves
-           - Thread poles through sleeves
-           - Secure with diagonal lashings
-        """
+        if is_first_message and not current_state.get('has_shown_initial_message', False):
+            # Use predefined initial message
+            initial_response = random.choice(initial_message_variations)
+            
+            # Get first follow-up question
+            first_question = random.choice(predefined_questions)
+            current_state['asked_questions'].add(first_question)
+            current_state['last_question'] = first_question
+            current_state['has_shown_initial_message'] = True
+            
+            return f"{initial_response}\n\n{first_question}"
         
-        # Determine response based on conversation state
-        if current_state['stage'] == 'initial':
-            # Initial snake bite first aid response using the provided template
-            # Dynamically adjust pronouns based on message context
-            pronouns = 'he/she/they' if 'victim' not in message.lower() else 'them'
+        # For subsequent messages, use predefined responses
+        return get_predefined_response(message, current_state)
             
-            response_text = f"""1. Move {pronouns} away from the snake. Remove any tight items like rings or bracelets. Keep {pronouns} calm and still.
-2. Keep {pronouns} leg still and straight. Don't tie anything around it or try to cut or suck the bite.
-3. If transport is far, make a stretcher using a tarp, rope, or jackets. Get {pronouns} to a health facility ASAP.
-4. If {pronouns} feel dizzy or vomit, lay {pronouns} on their left side. Watch {pronouns} breathing and be ready to help if needed."""
-            
-            # Update conversation state to ask follow-up question
-            current_state['stage'] = 'follow_up'
-            current_state['last_action'] = 'initial_first_aid'
-            
-            # Generate a dynamic follow-up question
-            follow_up_question = generate_follow_up_question(message, current_state, who_guidelines, stretcher_methods)
-            
-            # Append the follow-up question
-            response_text += f"\n\n{follow_up_question}"
-            
-            return response_text
-        
-        elif current_state['stage'] == 'follow_up' or current_state['stage'] == 'detailed_guidance':
-            # Process user's response and generate next steps
-            response_text, updated_context = process_user_response(
-                message, 
-                current_state, 
-                who_guidelines, 
-                stretcher_methods
-            )
-            
-            # Update conversation state
-            conversation_state[sender] = updated_context
-            
-            return response_text
-        
-        else:
-            # Final stage or reset
-            return "Emergency number: +999. Seek immediate medical help."
-    
     except Exception as e:
-        print(f"Unexpected error in generate_response: {str(e)}")
-        traceback.print_exc()
-        return "1. Call emergency services.\n\n2. Stay calm.\n\n3. Do not move.\n\n4. Wait for help."
+        return "Keep monitoring the person's condition. Seek medical help as soon as possible."
 
+# Twilio Stuff to send messages
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_bot():
-    incoming_msg = request.form.get("Body", "").lower()
-    sender = request.form.get("From")
-    
-    # Generate response using Gemini
-    response_text = generate_response(incoming_msg, sender)
-    
-    print(f"Received WhatsApp message from {sender}: {incoming_msg}")
-    print(f"Sending response: {response_text}")
-    
     try:
-        # Send response directly using Twilio client
-        message = client.messages.create(
-            body=response_text,
-            from_='whatsapp:+14155238886',  # Twilio's WhatsApp sandbox number
-            to=sender
-        )
-        print(f"Message sent with SID: {message.sid}")
+        # Verify Twilio credentials
+        if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
+            response = MessagingResponse()
+            response.message("Service temporarily unavailable. Please try again later.")
+            return str(response)
+
+        # Get incoming message
+        incoming_msg = request.form.get("Body", "").strip()
+        sender = request.form.get("From", "")
+        
+        if not incoming_msg or not sender:
+            response = MessagingResponse()
+            response.message("Invalid request")
+            return str(response)
+
+        # Generate response using Gemini
+        response_text = generate_response(incoming_msg, sender)
+        
+        try:
+            # Send response using Twilio client
+            message = client.messages.create(
+                body=response_text,
+                from_='whatsapp:+14155238886',  # Twilio's WhatsApp sandbox number
+                to=sender
+            )
+        except Exception as e:
+            # Fall back to TwiML response
+            response = MessagingResponse()
+            response.message(response_text)
+            return str(response)
+        
+        # Return empty TwiML response since we already sent the message
+        return str(MessagingResponse())
+        
     except Exception as e:
-        print(f"Error sending WhatsApp message: {e}")
-    
-    # Return empty TwiML to acknowledge receipt
-    response = MessagingResponse()
-    return str(response)
+        response = MessagingResponse()
+        response.message("An error occurred. Please try again.")
+        return str(response)
 
 @app.route("/sms", methods=['POST'])
 def sms_reply():
-    # Get the message from the request
     incoming_msg = request.json.get('Body', '').strip()
     sender = request.json.get('From', 'web-user')
-    print(f"\n=== Received message from {sender}: {incoming_msg} ===")
-
-    # Generate response
     response_text = generate_response(incoming_msg)
-    print(f"Final response: {response_text}")
-
-    # Return plain text for web requests
     return response_text
 
+@app.route("/reset", methods=['POST'])
+def reset_conversation():
+    """Reset the conversation state for the web user."""
+    try:
+        # Clear the conversation state for web-user
+        if 'web-user' in conversation_state:
+            del conversation_state['web-user']
+        return jsonify({"status": "success", "message": "Conversation reset successfully"}), 200
+    except Exception as e:
+        print(f"Error resetting conversation: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    app.run(port=5000)
